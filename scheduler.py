@@ -13,7 +13,26 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+import json as json_mod
+import httpx, os
+
 logger = logging.getLogger("hot-article-factory")
+
+def notify(text: str):
+    try:
+        resp = httpx.post(
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+            json={"app_id": os.getenv("FEISHU_APP_ID",""), "app_secret": os.getenv("FEISHU_APP_SECRET","")}, timeout=10)
+        token = resp.json()["tenant_access_token"]
+        open_id = os.getenv("FEISHU_NOTIFY_OPEN_ID", "")
+        if not open_id: return
+        httpx.post("https://open.feishu.cn/open-apis/im/v1/messages",
+            params={"receive_id_type": "open_id"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"receive_id": open_id, "msg_type": "text",
+                  "content": json_mod.dumps({"text": text})}, timeout=10)
+    except Exception as e:
+        logger.warning(f"通知失败: {e}")
 
 
 class ArticleScheduler:
@@ -29,8 +48,10 @@ class ArticleScheduler:
         try:
             self.pipeline.run_full()
             logger.info("文章准备完成！")
+            notify("[文章工厂] 3篇文章已生成，待定时发布")
         except Exception as e:
             logger.error(f"准备文章失败: {e}")
+            notify(f"[文章工厂] 文章准备失败: {e}")
 
     def publish_slot_0(self):
         self._publish(0)
@@ -49,8 +70,10 @@ class ArticleScheduler:
             for r in results:
                 if r.get("success"):
                     logger.info(f"[{times[index]}] 发布成功: {r.get('title','')[:40]}")
+                    notify(f"[文章工厂] {times[index]} 发布成功: {r.get('title','')[:30]}")
                 else:
                     logger.error(f"[{times[index]}] 发布失败: {r.get('error','')}")
+                    notify(f"[文章工厂] {times[index]} 发布失败")
         except Exception as e:
             logger.error(f"[{times[index]}] 发布异常: {e}")
 
